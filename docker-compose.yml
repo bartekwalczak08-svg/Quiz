@@ -1,11 +1,60 @@
 version: '3.8'
 
 services:
+  # ========================================
+  # PostgreSQL Database
+  # ========================================
+  postgres:
+    image: postgres:16-alpine
+    container_name: quiz-postgres
+    environment:
+      POSTGRES_USER: quiz_user
+      POSTGRES_PASSWORD: quiz_password
+      POSTGRES_DB: quiz_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U quiz_user -d quiz_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - quiz_network
+
+  # ========================================
+  # Application (Python)
+  # ========================================
   app:
     build: .
     container_name: llm-quiz-engine
+    depends_on:
+      postgres:
+        condition: service_healthy
     volumes:
       - .:/app
     environment:
       - PYTHONUNBUFFERED=1
-    command: pytest tests/ -v
+      - DATABASE_URL=postgresql://quiz_user:quiz_password@postgres:5432/quiz_db
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
+      - ENVIRONMENT=development
+    ports:
+      - "8000:8000"
+    command: sh -c "alembic upgrade head && pytest tests/ -v"
+    networks:
+      - quiz_network
+
+# ========================================
+# Volumes
+# ========================================
+volumes:
+  postgres_data:
+    driver: local
+
+# ========================================
+# Networks
+# ========================================
+networks:
+  quiz_network:
+    driver: bridge
