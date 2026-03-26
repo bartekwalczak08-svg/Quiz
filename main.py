@@ -100,14 +100,9 @@ class QuizApp:
 
         print("\n⏳ Generuję pytanie...\n")
 
+        self._start_session()
         try:
-            # Rozpocznij sesję
-            self._start_session()
-
-            # Generuj pytanie
             question = generate_question(topic, difficulty)
-
-            # Zapisz pytanie do bazy
             question_id = str(uuid.uuid4())
             question_orm = QuestionORM(
                 question_id=question_id,
@@ -119,35 +114,39 @@ class QuizApp:
                 created_at=datetime.now()
             )
             self.db.save_question(question_orm)
-
             print(f"📌 Temat: {question.topic}")
             print(f"📊 Poziom: {question.difficulty.upper()}")
             print(f"\n📝 Pytanie:\n{question.question_text}\n")
             print(f"💡 Podpowiedź: {question.hint}\n")
-
-            # Pobierz odpowiedź
-            user_answer = input("Twoja odpowiedź: ").strip()
-            if not user_answer:
-                print("❌ Odpowiedź nie może być pusta!")
-                self._end_session()
-                return
-
-            print("\n⏳ Oceniam odpowiedź...\n")
-
-            # Zapisz odpowiedź do bazy
-            answer_id = str(uuid.uuid4())
-            answer_orm = UserAnswerORM(
-                answer_id=answer_id,
+        except Exception as e:
+            print(f"❌ Błąd generowania pytania: {e}")
+            question_id = str(uuid.uuid4())
+            question_orm = QuestionORM(
                 question_id=question_id,
-                user_answer=user_answer,
-                timestamp=datetime.now()
+                session_id=self.current_session_id,
+                topic=topic,
+                difficulty=difficulty,
+                question_text=f"[Błąd generowania pytania: {e}]",
+                hint="",
+                created_at=datetime.now()
             )
-            self.db.save_answer(answer_orm)
-
-            # Oceń odpowiedź
-            evaluation = evaluate_answer(question.question_text, user_answer)
-
-            # Zapisz ocenę do bazy
+            self.db.save_question(question_orm)
+        user_answer = input("Twoja odpowiedź: ").strip()
+        if not user_answer:
+            print("❌ Odpowiedź nie może być pusta!")
+            self._end_session()
+            return
+        print("\n⏳ Oceniam odpowiedź...\n")
+        answer_id = str(uuid.uuid4())
+        answer_orm = UserAnswerORM(
+            answer_id=answer_id,
+            question_id=question_id,
+            user_answer=user_answer,
+            timestamp=datetime.now()
+        )
+        self.db.save_answer(answer_orm)
+        try:
+            evaluation = evaluate_answer(question_orm.question_text, user_answer)
             evaluation_orm = EvaluationORM(
                 evaluation_id=str(uuid.uuid4()),
                 answer_id=answer_id,
@@ -158,8 +157,6 @@ class QuizApp:
                 learning_tip=evaluation.learning_tip
             )
             self.db.save_evaluation(evaluation_orm)
-
-            # Wyświetl wynik
             emoji = "✅" if evaluation.is_correct else "❌"
             print(f"{emoji} WYNIK: {evaluation.score}/10")
             print(f"\n📖 Wyjaśnienie:")
@@ -168,17 +165,23 @@ class QuizApp:
             print(f"{evaluation.learning_tip}\n")
             print(f"📌 Poprawna odpowiedź/Pełne wyjaśnienie:")
             print(f"{evaluation.correct_answer}\n")
-
-            # Zakończ sesję
             self._end_session(total_score=evaluation.score)
             print("✅ Wynik zapisany do bazy danych!\n")
-
-        except ValueError as e:
-            print(f"❌ Błąd walidacji: {e}")
-            self._end_session()
         except Exception as e:
-            print(f"❌ Błąd: {e}")
-            self._end_session()
+            print(f"❌ Błąd oceny odpowiedzi: {e}")
+            raw_response = getattr(e, 'raw_response', None)
+            evaluation_orm = EvaluationORM(
+                evaluation_id=str(uuid.uuid4()),
+                answer_id=answer_id,
+                is_correct=False,
+                score=0,
+                explanation=f"Błąd parsowania JSON. Surowa odpowiedź: {raw_response}" if raw_response else "Błąd parsowania JSON. Brak surowej odpowiedzi.",
+                correct_answer="",
+                learning_tip=""
+            )
+            self.db.save_evaluation(evaluation_orm)
+            self._end_session(total_score=0)
+            print("❌ Wynik zapisany do bazy z błędem!\n")
 
     def show_history(self):
         """Wyświetl historię wyników"""
