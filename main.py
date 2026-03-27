@@ -86,10 +86,33 @@ class QuizApp:
         """Uruchom quiz"""
         print("\n📝 NOWY QUIZ\n")
 
+
+        # Importuj konfigurację tematów
+        from config.quiz_topics import QUIZ_TOPICS, print_topics_menu
+
+        # Wyświetl dostępne tematy
+        print_topics_menu()
+
         # Pobierz temat
-        topic = input("Temat (Python/SQL/Pydantic/Inne): ").strip()
-        if not topic:
-            print("❌ Temat nie może być pusty!")
+        topic = input("Wybierz temat (nazwa lub numer): ").strip()
+
+        # Konwertuj numer na nazwę tematu
+        topics_list = list(QUIZ_TOPICS.keys())
+        try:
+            if topic.isdigit():
+                topic_idx = int(topic) - 1
+                if 0 <= topic_idx < len(topics_list):
+                    topic = topics_list[topic_idx]
+                else:
+                    print("❌ Nieprawidłowy numer tematu!")
+                    return
+        except ValueError:
+            pass
+
+        # Waliduj temat
+        if topic not in QUIZ_TOPICS:
+            print(f"❌ Temat '{topic}' nie istnieje!")
+            print(f"Dostępne tematy: {', '.join(QUIZ_TOPICS.keys())}")
             return
 
         # Pobierz poziom trudności

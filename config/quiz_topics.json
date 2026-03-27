@@ -1,0 +1,17 @@
+{
+    "Python": {
+        "description": "Język Python, biblioteki, Django/FastAPI",
+        "icon": "🐍",
+        "difficulty_levels": ["easy", "medium", "hard"]
+    },
+    "SQL": {
+        "description": "Język SQL, zapytania, optymalizacja",
+        "icon": "🗄️",
+        "difficulty_levels": ["easy", "medium", "hard"]
+    },
+    "Pydantic": {
+        "description": "Walidacja danych, modele, serializacja",
+        "icon": "📋",
+        "difficulty_levels": ["easy", "medium", "hard"]
+    }
+}

@@ -21,28 +21,53 @@ class OpenRouterClient:
         self.timeout = timeout
 
     def _parse_json_response(self, content: str, response_model):
-        """Wyciąga JSON z odpowiedzi i parsuje do modelu Pydantic"""
+        """Wyciąga JSON z odpowiedzi i parsuje do modelu Pydantic. Przy błędzie loguje całą odpowiedź i czyści typowe śmieci."""
+        import re
         if content is None:
             raise ValueError("Model nie zwrócił odpowiedzi (content is None)")
 
-        # Szukamy JSON w odpowiedzi (mogą być dodatkowe znaki)
+        # Spróbuj znaleźć pierwszy poprawny JSON w odpowiedzi
         start_idx = content.find('{')
         end_idx = content.rfind('}') + 1
-        if start_idx == -1:
-            raise ValueError("Nie znaleziono JSON\n\nOdpowiedź modelu:\n" + str(content))
-        if end_idx <= start_idx:
-            raise ValueError("Błąd parsowania JSON\n\nOdpowiedź modelu:\n" + str(content))
-        json_str = content[start_idx:end_idx]
+        if start_idx == -1 or end_idx <= start_idx:
+            # Spróbuj wyciągnąć JSON przez regex (bardziej odporne na śmieci)
+            matches = re.findall(r'\{.*?\}', content, re.DOTALL)
+            if matches:
+                json_str = matches[0]
+            else:
+                raise ValueError(f"Nie znaleziono poprawnego JSON. Surowa odpowiedź modelu:\n{content}")
+        else:
+            json_str = content[start_idx:end_idx]
+
+        # Usuń typowe śmieci (np. Odpowiedź modelu:, Odpowiedź:, itp.)
+        json_str = re.sub(r'^[^{]*', '', json_str)
+        json_str = re.sub(r'[^}]*$', '', json_str)
+
+        # Loguj wyciągnięty fragment JSON
+        print("[DEBUG] Wyciągnięty JSON do parsowania:")
+        print(json_str)
+
+        # Automatyczna naprawa typowych błędów
+        # 1. Niedomknięte cudzysłowy na końcu
+        if json_str.count('"') % 2 != 0:
+            json_str = json_str.rstrip('"')
+        # 2. Ucięty tekst po ostatniej klamrze
+        last_brace = json_str.rfind('}')
+        if last_brace != -1:
+            json_str = json_str[:last_brace+1]
+
         try:
             data = json.loads(json_str)
-        except Exception:
-            raise ValueError("Błąd parsowania JSON\n\nOdpowiedź modelu:\n" + str(content))
+        except Exception as e:
+            raise ValueError(f"Błąd parsowania JSON: {e}\nWyciągnięty fragment:\n{json_str}\nSurowa odpowiedź modelu:\n{content}")
+
         obj = response_model(**data)
         # Walidacja score jeśli model to Evaluation
         if response_model.__name__ == "Evaluation":
             score = getattr(obj, "score", None)
             if not (isinstance(score, (int, float)) and 0 <= score <= 10):
                 raise ValueError(f"score poza zakresem 0-10: {score}\n\nOdpowiedź modelu:\n" + str(content))
+        return obj
         return obj
 
     def generate_question(self, topic: str, difficulty: str) -> Question:
@@ -145,22 +170,41 @@ Zwróć odpowiedź WYŁĄCZNIE w tym formacie JSON (bez dodatkowego tekstu):
             "temperature": 0.7,
             "max_tokens": 500
         }
-        try:
-            response = httpx.post(
-                f"{self.base_url}/chat/completions",
-                json=payload,
-                headers=headers,
-                timeout=self.timeout
-            )
-            response.raise_for_status()
-        except httpx.HTTPStatusError as e:
-            raise ValueError(f"Błąd API ({e.response.status_code}): {e.response.text}")
-        except httpx.RequestError as e:
-            raise ValueError(f"Błąd połączenia z API: {e}")
+        max_retries = 3
+        for attempt in range(1, max_retries + 1):
+            try:
+                response = httpx.post(
+                    f"{self.base_url}/chat/completions",
+                    json=payload,
+                    headers=headers,
+                    timeout=self.timeout
+                )
+                response.raise_for_status()
+            except httpx.HTTPStatusError as e:
+                if attempt == max_retries:
+                    raise ValueError(f"Błąd API ({e.response.status_code}): {e.response.text}")
+                continue
+            except httpx.RequestError as e:
+                if attempt == max_retries:
+                    raise ValueError(f"Błąd połączenia z API: {e}")
+                continue
 
-        result = response.json()
-        content = result["choices"][0]["message"]["content"]
-        return self._parse_json_response(content, Evaluation)
+            result = response.json()
+            print(f"[DEBUG] Odpowiedź API (ocena), próba {attempt}:", result)
+            try:
+                content = result["choices"][0]["message"]["content"]
+            except (KeyError, IndexError, TypeError):
+                content = None
+            if content:
+                try:
+                    return self._parse_json_response(content, Evaluation)
+                except Exception as e:
+                    if attempt == max_retries:
+                        raise
+                    continue
+            # Jeśli content jest None, spróbuj ponownie
+        # Po wszystkich próbach
+        raise ValueError("Model nie zwrócił odpowiedzi po 3 próbach. Spróbuj ponownie później lub sprawdź API.")
 
 
 # Globalna instancja klienta
